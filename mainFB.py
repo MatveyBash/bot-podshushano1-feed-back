@@ -2,7 +2,7 @@ import telebot
 from telebot import types
 
 # Настройки бота
-TOKEN = '7800950778:AAHGhD9DlZYV0iaxZRVZSMR1Ultw81qtz38'
+TOKEN = '7025728639:AAF95bAnSEEsZ_iD4B6fazFtvFTdXwJc1TA'
 bot = telebot.TeleBot(TOKEN)
 
 # Администраторы и их темы (ID: [темы])
@@ -238,4 +238,5 @@ if __name__ == '__main__':
     print("Бот запущен...")
     print("Администраторы будут видеть ID пользователей в сообщениях")
     bot.polling(none_stop=True)
+
 
