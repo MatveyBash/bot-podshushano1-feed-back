@@ -1,5 +1,6 @@
 import telebot
 from telebot import types
+import time
 
 # Настройки бота
 TOKEN = '7025728639:AAF95bAnSEEsZ_iD4B6fazFtvFTdXwJc1TA'
@@ -9,13 +10,14 @@ bot = telebot.TeleBot(TOKEN)
 ADMINS = {
     1616523146: ['Разработчик/Владелец⚠️'],
     5683628958: ['Глав. Админ⛔'],
-    6172742677: ['Менеджер🧐']  # Новый администратор для общих вопросов
+    6172742677: ['Менеджер🧐', 'Общие вопросы']  # Добавляем общие вопросы для менеджера
 }
 
 # Словари для хранения данных
 user_states = {}  # Текущее состояние пользователя
 user_requests = {}  # Активные обращения пользователей
 admin_requests = {}  # Распределенные обращения к админам
+request_timestamps = {}  # Временные метки для отслеживания времени создания запросов
 
 
 # Клавиатура с темами
@@ -26,7 +28,6 @@ def get_topics_keyboard():
         topics.update(admin_topics)
     for topic in sorted(topics):  # Сортируем темы для удобства
         keyboard.add(types.KeyboardButton(topic))
-    keyboard.add(types.KeyboardButton("Общие вопросы"))  # Явно добавляем общие вопросы
     return keyboard
 
 
@@ -38,6 +39,7 @@ def start(message):
         bot.send_message(user_id, "Вы администратор. Ожидайте обращений.")
         return
 
+    # Очищаем предыдущее состояние, если есть
     user_states[user_id] = 'choosing_topic'
     bot.send_message(user_id,
                      "Привет.👋Это тех поддержка подслушано😶‍🌫️\nВыбери тему обращения:",
@@ -60,6 +62,7 @@ def close_chat(message):
             user_states.pop(client_id, None)
             user_requests.pop(client_id, None)
             admin_requests.pop(user_id, None)
+            request_timestamps.pop(client_id, None)
 
             bot.send_message(user_id, f"Вы закрыли обращение пользователя ID: {client_id}")
         else:
@@ -75,17 +78,42 @@ def close_chat(message):
 
         if admin_id:
             bot.send_message(admin_id, f"Пользователь ID: {user_id} закрыл обращение.")
+            admin_requests.pop(admin_id, None)
 
         # Очищаем данные
         user_states.pop(user_id, None)
         user_requests.pop(user_id, None)
-        if admin_id:
-            admin_requests.pop(admin_id, None)
+        request_timestamps.pop(user_id, None)
 
         bot.send_message(user_id, "Вы закрыли обращение. Для нового обращения нажмите /start",
                          reply_markup=types.ReplyKeyboardRemove())
     else:
         bot.send_message(user_id, "У вас нет активных обращений.")
+
+
+# Очистка устаревших запросов (запускать периодически)
+def cleanup_old_requests():
+    current_time = time.time()
+    to_remove = []
+    
+    for user_id, timestamp in request_timestamps.items():
+        # Удаляем запросы старше 24 часов
+        if current_time - timestamp > 86400:
+            to_remove.append(user_id)
+    
+    for user_id in to_remove:
+        admin_id = None
+        for aid, uid in admin_requests.items():
+            if uid == user_id:
+                admin_id = aid
+                break
+        
+        if admin_id:
+            admin_requests.pop(admin_id, None)
+        
+        user_states.pop(user_id, None)
+        user_requests.pop(user_id, None)
+        request_timestamps.pop(user_id, None)
 
 
 # Обработка сообщений от пользователей
@@ -95,13 +123,18 @@ def handle_user_message(message):
     state = user_states.get(user_id, 'choosing_topic')
 
     if state == 'choosing_topic':
-        if message.text in [topic for topics in ADMINS.values() for topic in topics]:
+        all_topics = []
+        for topics in ADMINS.values():
+            all_topics.extend(topics)
+        
+        if message.text in all_topics:
             user_states[user_id] = 'in_chat'
             topic = message.text
             user_requests[user_id] = {
                 'topic': topic,
                 'messages': [message.text]
             }
+            request_timestamps[user_id] = time.time()
 
             # Находим подходящего админа
             admin_id = find_admin_for_topic(topic)
@@ -117,7 +150,10 @@ def handle_user_message(message):
                                  reply_markup=types.ReplyKeyboardRemove())
             else:
                 bot.send_message(user_id, "Сейчас нет свободных администраторов. Попробуйте позже.")
-                user_states.pop(user_id, None)
+                # Сбрасываем состояние, чтобы пользователь мог попробовать снова
+                user_states[user_id] = 'choosing_topic'
+                user_requests.pop(user_id, None)
+                request_timestamps.pop(user_id, None)
         else:
             bot.send_message(user_id, "Пожалуйста, выберите тему из предложенных.")
 
@@ -152,6 +188,18 @@ def handle_user_message(message):
 @bot.message_handler(func=lambda m: m.from_user.id in ADMINS)
 def handle_admin_message(message):
     admin_id = message.from_user.id
+    
+    # Очищаем старые запросы перед обработкой
+    cleanup_old_requests()
+
+    # Обработка команды /active
+    if message.text == '/active':
+        if admin_id in admin_requests:
+            user_id = admin_requests[admin_id]
+            bot.send_message(admin_id, f"✅ У вас активное обращение от пользователя ID: {user_id}")
+        else:
+            bot.send_message(admin_id, "ℹ️ У вас нет активных обращений.")
+        return
 
     # Если администратор отвечает на сообщение пользователя
     if message.reply_to_message and 'Пользователь ID:' in message.reply_to_message.text:
@@ -185,14 +233,6 @@ def handle_admin_message(message):
         except Exception as e:
             bot.send_message(admin_id, f"❌ Не удалось обработать сообщение: {str(e)}")
 
-    # Команда для проверки активных обращений
-    elif message.text == '/active':
-        if admin_id in admin_requests:
-            user_id = admin_requests[admin_id]
-            bot.send_message(admin_id, f"✅ У вас активное обращение от пользователя ID: {user_id}")
-        else:
-            bot.send_message(admin_id, "ℹ️ У вас нет активных обращений.")
-
     # Если администратор просто пишет сообщение (не ответ)
     elif admin_id in admin_requests:
         user_id = admin_requests[admin_id]
@@ -214,6 +254,7 @@ def handle_admin_message(message):
             user_requests[user_id]['messages'].append(f"Admin: {message.text}")
         else:
             bot.send_message(admin_id, "❌ Обращение уже закрыто.")
+            admin_requests.pop(admin_id, None)
     else:
         bot.send_message(admin_id, "ℹ️ У вас нет активных обращений. Ожидайте новых обращений.")
 
