@@ -271,13 +271,17 @@ def find_admin_for_topic(topic):
             return admin_id
 
     return None
-
-
-# Запуск бота
+# В самом конце, перед запуском polling добавьте:
 if __name__ == '__main__':
     print("Бот запущен...")
+    
+    # Удаляем вебхук перед запуском polling
+    bot.remove_webhook()
+    time.sleep(1)
+    
     print("Администраторы будут видеть ID пользователей в сообщениях")
     bot.polling(none_stop=True)
+
 
 
 
